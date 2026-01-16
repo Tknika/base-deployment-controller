@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "base-deployment-controller"
+version = "0.1.0"
+description = "REST API to control the basic operations of a deployment"
+readme = "README.md"
+requires-python = ">=3.8"
+authors = [
+  { name = "Tknika" }
+]
+license = { text = "Creative Commons Atribución-NoComercial (CC BY-NC)" }
+dependencies = [
+  "fastapi>=0.128.0",
+  "uvicorn[standard]>=0.40.0",
+  "python-dotenv>=1.2.1",
+  "pyyaml>=6.0.3",
+  "websockets>=16.0",
+  "python-on-whales>=0.80.0",
+]
+
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.4.0",
+  "pytest-asyncio>=0.21.0",
+  "requests>=2.31.0",
+]
+
+[tool.setuptools]
+packages = { find = { where = ["src"] } }
+include-package-data = false
+
+[tool.setuptools.exclude-package-data]
+"*" = ["data/*", "data/**", "tests/*", "tests/**", "test_*", "*.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+asyncio_mode = "auto"

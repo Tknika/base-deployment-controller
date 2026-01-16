@@ -1,0 +1,451 @@
+services:
+  mongo:
+    image: mongo:6.0
+    container_name: mongo
+    command: --bind_ip 0.0.0.0
+    volumes:
+      - mongodbdata:/data/db
+      - mongodbdata:/data/configdb
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    expose:
+      - "27017/udp"
+      - "27017/tcp"
+    networks:
+      default:
+        ipv4_address: ${MONGO_IP}
+  webui:
+    image: ghcr.io/tknika/docker_open5gs:v2.7.6-20251216
+    container_name: webui
+    depends_on:
+      - mongo
+    environment:
+      - COMPONENT_NAME=webui
+      - MONGO_IP=${MONGO_IP}
+    volumes:
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    expose:
+      - "9999/tcp"
+    ports:
+      - "9999:9999/tcp"
+    networks:
+      default:
+        ipv4_address: ${WEBUI_IP}
+  hss:
+    image: ghcr.io/tknika/docker_open5gs:v2.7.6-20251216
+    container_name: hss
+    environment:
+      - COMPONENT_NAME=hss
+      - MNC=${MNC}
+      - MCC=${MCC}
+      - HSS_IP=${HSS_IP}
+      - MME_IP=${MME_IP}
+      - MONGO_IP=${MONGO_IP}
+      - MAX_NUM_UE=${MAX_NUM_UE}
+    volumes:
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    depends_on:
+      - mongo
+    expose:
+      - "3868/tcp"
+      - "3868/sctp"
+      - "5868/tcp"
+      - "5868/sctp"
+    networks:
+      default:
+        ipv4_address: ${HSS_IP}
+  sgwc:
+    image: ghcr.io/tknika/docker_open5gs:v2.7.6-20251216
+    depends_on:
+      - smf
+      - upf
+    container_name: sgwc
+    environment:
+      - COMPONENT_NAME=sgwc
+      - SGWU_IP=${SGWU_IP}
+      - SGWC_IP=${SGWC_IP}
+      - MAX_NUM_UE=${MAX_NUM_UE}
+    volumes:
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    expose:
+      - "2123/udp"
+      - "8805/udp"
+    networks:
+      default:
+        ipv4_address: ${SGWC_IP}
+  sgwu:
+    image: ghcr.io/tknika/docker_open5gs:v2.7.6-20251216
+    depends_on:
+      - smf
+      - upf
+    container_name: sgwu
+    environment:
+      - COMPONENT_NAME=sgwu
+      - SGWU_IP=${SGWU_IP}
+      - SGWC_IP=${SGWC_IP}
+      - SGWU_ADVERTISE_IP=${SGWU_ADVERTISE_IP}
+      - MAX_NUM_UE=${MAX_NUM_UE}
+    volumes:
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    expose:
+      - "8805/udp"
+      - "2152/udp"
+    ports:
+      - "${SGWU_ADVERTISE_IP}:2152:2152/udp"
+    networks:
+      default:
+        ipv4_address: ${SGWU_IP}
+  smf:
+    image: ghcr.io/tknika/docker_open5gs:v2.7.6-20251216
+    container_name: smf
+    environment:
+      - COMPONENT_NAME=smf
+      - DEPLOY_MODE=4G
+      - SMF_IP=${SMF_IP}
+      - SCP_IP=${SCP_IP}
+      - NRF_IP=${NRF_IP}
+      - UPF_IP=${UPF_IP}
+      - PCSCF_IP=${PCSCF_IP}
+      - PCRF_IP=${PCRF_IP}
+      - OCS_IP=${OCS_IP}
+      - OSMOEPDG_IP=${OSMOEPDG_IP}
+      - SMF_DNS1=${SMF_DNS1}
+      - SMF_DNS2=${SMF_DNS2}
+      - MAX_NUM_UE=${MAX_NUM_UE}
+      - PCRF_BIND_PORT=${PCRF_BIND_PORT}
+      - OCS_BIND_PORT=${OCS_BIND_PORT}
+      - UE_IPV4_INTERNET=${UE_IPV4_INTERNET}
+      - UE_IPV4_IMS=${UE_IPV4_IMS}
+    volumes:
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    expose:
+      - "3868/tcp"
+      - "3868/sctp"
+      - "5868/tcp"
+      - "5868/sctp"
+      - "8805/udp"
+      - "2123/udp"
+      - "7777/tcp"
+      - "9091/tcp"
+    networks:
+      default:
+        ipv4_address: ${SMF_IP}
+  upf:
+    image: ghcr.io/tknika/docker_open5gs:v2.7.6-20251216
+    depends_on:
+      - smf
+    container_name: upf
+    environment:
+      - COMPONENT_NAME=upf
+      - UPF_TUNTAP_MODE=${UPF_TUNTAP_MODE}
+      - UPF_ADVERTISE_IP=${UPF_ADVERTISE_IP}
+      - UPF_INTERNET_APN_IF_NAME=${UPF_INTERNET_APN_IF_NAME}
+      - UPF_IMS_APN_IF_NAME=${UPF_IMS_APN_IF_NAME}
+      - UE_IPV4_INTERNET=${UE_IPV4_INTERNET}
+      - UE_IPV4_IMS=${UE_IPV4_IMS}
+      - MAX_NUM_UE=${MAX_NUM_UE}
+      - UPF_IP=${UPF_IP}
+      - SMF_IP=${SMF_IP}
+      - PCSCF_IP=${PCSCF_IP}
+    volumes:
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    expose:
+      - "2152/udp"
+      - "8805/udp"
+      - "9091/tcp"
+    cap_add:
+      - NET_ADMIN
+    privileged: true
+    sysctls:
+      - net.ipv4.ip_forward=1
+      - net.ipv6.conf.all.disable_ipv6=0
+    networks:
+      default:
+        ipv4_address: ${UPF_IP}
+  mme:
+    image: ghcr.io/tknika/docker_open5gs:v2.7.6-20251216
+    depends_on:
+      - hss
+      - sgwc
+      - sgwu
+      - smf
+      - upf
+      #- osmomsc
+    container_name: mme
+    environment:
+      - COMPONENT_NAME=mme
+      - MNC=${MNC}
+      - MCC=${MCC}
+      - TAC=${TAC}
+      - MAX_NUM_UE=${MAX_NUM_UE}
+      - MME_IP=${MME_IP}
+      - OSMOMSC_IP=${OSMOMSC_IP}
+      - SGWC_IP=${SGWC_IP}
+      - SMF_IP=${SMF_IP}
+      - HSS_IP=${HSS_IP}
+
+    volumes:
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    expose:
+      - "3868/tcp"
+      - "3868/sctp"
+      - "5868/tcp"
+      - "5868/sctp"
+      - "36412/sctp"
+      - "2123/udp"
+      - "9091/tcp"
+    ports:
+      - "36412:36412/sctp"
+    networks:
+      default:
+        ipv4_address: ${MME_IP}
+  pcrf:
+    image: ghcr.io/tknika/docker_open5gs:v2.7.6-20251216
+    container_name: pcrf
+    environment:
+      - COMPONENT_NAME=pcrf
+      - MONGO_IP=${MONGO_IP}
+      - MAX_NUM_UE=${MAX_NUM_UE}
+      - PCRF_IP=${PCRF_IP}
+      - SMF_IP=${SMF_IP}
+      - PCRF_BIND_PORT=${PCRF_BIND_PORT}
+      - PCSCF_IP=${PCSCF_IP}
+      - PCSCF_BIND_PORT=${PCSCF_BIND_PORT}
+    depends_on:
+      - mongo
+    volumes:
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    expose:
+      - "${PCRF_BIND_PORT}/tcp"
+      - "${PCRF_BIND_PORT}/sctp"
+      - "5868/tcp"
+      - "5868/sctp"
+    ports:
+       - "${PCRF_BIND_PORT}:${PCRF_BIND_PORT}/sctp"
+       - "${PCRF_BIND_PORT}:${PCRF_BIND_PORT}/tcp"
+    networks:
+      default:
+        ipv4_address: ${PCRF_IP}
+
+networks:
+  default:
+    external: true
+    name: docker_open5gs_default
+    ipam:
+      config:
+        - subnet: ${INTERNAL_NETWORK_SUBNET}
+
+volumes:
+  mongodbdata:
+    name: docker_open5gs_mongodbdata
+
+x-metadata:
+  id: 4g-core
+  name: 4G Core Network
+  description: Docker Compose configuration for a 4G Core Network using Open5GS components.
+  version: "1.0"
+  author: TKNIKA - www.tknika.eus
+  changelog: "First release."
+  documentation_url: ""
+
+x-env-vars:
+  MCC:
+    name: MCC
+    description: Mobile Country Code
+    default: "001"
+    advanced: false
+    type: string:0;^\d{3}$
+  MNC:
+    name: MNC
+    description: Mobile Network Code
+    default: "01"
+    advanced: false
+    type: string:0;^\d{2}$
+  TAC:
+    name: TAC
+    description: Tracking Area Code
+    default: "1"
+    advanced: false
+    type: string:0;^\d{1,5}$
+  MAX_NUM_UE:
+    name: Max number of UEs
+    description: Maximum number of User Equipments
+    default: "1024"
+    advanced: false
+    type: integer:0;2048
+  MONGO_IP:
+    name: MongoDB IP
+    description: IP address of the MongoDB container
+    default: "172.22.0.2"
+    advanced: true
+    type: string:0;^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$
+  WEBUI_IP:
+    name: WebUI IP
+    description: IP address of the WebUI container
+    default: "172.22.0.26"
+    advanced: true
+    type: string:0;^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$
+  HSS_IP:
+    name: HSS IP
+    description: IP address of the Home Subscriber Server (HSS) container
+    default: "172.22.0.3"
+    advanced: true
+    type: string:0;^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$
+  MME_IP:
+    name: MME IP
+    description: IP address of the Mobility Management Entity (MME) container
+    default: "172.22.0.9"
+    advanced: true
+    type: string:0;^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$
+  SGWC_IP:
+    name: SGW-C IP
+    description: IP address of the Serving Gateway Controller (SGW-C) container
+    default: "172.22.0.5"
+    advanced: true
+    type: string:0;^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$
+  SGWU_IP:
+    name: SGW-U IP
+    description: IP address of the Serving Gateway User plane (SGW-U) container
+    default: "172.22.0.6"
+    advanced: true
+    type: string:0;^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$
+  SGWU_ADVERTISE_IP:
+    name: SGW-U Advertise IP
+    description: Advertised IP address for SGW-U external communication
+    default: "192.168.1.121"
+    advanced: true
+    type: string:0;^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$
+  SMF_IP:
+    name: SMF IP
+    description: IP address of the Session Management Function (SMF) container
+    default: "172.22.0.7"
+    advanced: true
+    type: string:0;^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$
+  SCP_IP:
+    name: SCP IP
+    description: IP address of the Service Communication Proxy (SCP)
+    default: "172.22.0.35"
+    advanced: true
+    type: string:0;^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$
+  NRF_IP:
+    name: NRF IP
+    description: IP address of the Network Repository Function (NRF)
+    default: "172.22.0.12"
+    advanced: true
+    type: string:0;^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$
+  UPF_IP:
+    name: UPF IP
+    description: IP address of the User Plane Function (UPF) container
+    default: "172.22.0.8"
+    advanced: true
+    type: string:0;^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$
+  PCSCF_IP:
+    name: P-CSCF IP
+    description: IP address of the Proxy Call Session Control Function (P-CSCF)
+    default: "172.22.0.21"
+    advanced: true
+    type: string:0;^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$
+  PCRF_IP:
+    name: PCRF IP
+    description: IP address of the Policy and Charging Rules Function (PCRF) container
+    default: "172.22.0.4"
+    advanced: true
+    type: string:0;^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$
+  OCS_IP:
+    name: OCS IP
+    description: IP address of the Online Charging System (OCS)
+    default: "172.22.0.40"
+    advanced: true
+    type: string:0;^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$
+  OSMOEPDG_IP:
+    name: OSMO ePDG IP
+    description: IP address of the OSMO Evolved Packet Data Gateway (ePDG)
+    default: "172.22.0.41"
+    advanced: true
+    type: string:0;^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$
+  OSMOMSC_IP:
+    name: OSMO MSC IP
+    description: IP address of the OSMO Mobile Switching Center (MSC)
+    default: "172.20.0.16"
+    advanced: true
+    type: string:0;^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$
+  SMF_DNS1:
+    name: SMF Primary DNS
+    description: Primary DNS server for SMF
+    default: "8.8.8.8"
+    advanced: true
+    type: string:0;^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$
+  SMF_DNS2:
+    name: SMF Secondary DNS
+    description: Secondary DNS server for SMF
+    default: "8.8.4.4"
+    advanced: true
+    type: string:0;^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$
+  UPF_TUNTAP_MODE:
+    name: UPF TUN/TAP Mode
+    description: TUN/TAP mode for UPF packet handling
+    default: "tun"
+    advanced: true
+    type: enum:tun,tap
+  UPF_ADVERTISE_IP:
+    name: UPF Advertise IP
+    description: Advertised IP address for UPF external communication
+    default: "172.22.0.8"
+    advanced: true
+    type: string:0;^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$
+  UPF_INTERNET_APN_IF_NAME:
+    name: UPF Internet APN Interface
+    description: Network interface name for Internet APN in UPF
+    default: "ogstun"
+    advanced: true
+    type: string:0;^[a-zA-Z0-9\-]+$
+  UPF_IMS_APN_IF_NAME:
+    name: UPF IMS APN Interface
+    description: Network interface name for IMS APN in UPF
+    default: "ogstun2"
+    advanced: true
+    type: string:0;^[a-zA-Z0-9\-]+$
+  UE_IPV4_INTERNET:
+    name: UE IPv4 Internet Subnet
+    description: IPv4 subnet for Internet APN user equipments
+    default: "192.168.100.0/24"
+    advanced: true
+    type: string:0;^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/\d{1,2}$
+  UE_IPV4_IMS:
+    name: UE IPv4 IMS Subnet
+    description: IPv4 subnet for IMS APN user equipments
+    default: "192.168.101.0/24"
+    advanced: true
+    type: string:0;^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/\d{1,2}$
+  PCRF_BIND_PORT:
+    name: PCRF Bind Port
+    description: Port for PCRF diameter protocol binding
+    default: "3873"
+    advanced: true
+    type: integer:1;65535
+  OCS_BIND_PORT:
+    name: OCS Bind Port
+    description: Port for OCS diameter protocol binding
+    default: "3872"
+    advanced: true
+    type: integer:1;65535
+  PCSCF_BIND_PORT:
+    name: P-CSCF Bind Port
+    description: Port for P-CSCF SIP protocol binding
+    default: "3871"
+    advanced: true
+    type: integer:1;65535
+  INTERNAL_NETWORK_SUBNET:
+    name: Internal Network Subnet
+    description: CIDR subnet for the internal Docker network
+    default: "172.22.0.0/24"
+    advanced: true
+    type: string:0;^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/\d{1,2}$
