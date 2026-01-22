@@ -47,11 +47,3 @@ class DeploymentPingResponse(BaseModel):
 
     success: bool = Field(..., description="Ping success status")
     message: str = Field(..., description="Ping message")
-
-
-class DeploymentActionResponse(BaseModel):
-    """Response after performing a deployment action."""
-
-    success: bool = Field(..., description="Action success status")
-    action: str = Field(..., description="Action performed")
-    message: str = Field(..., description="Status message")

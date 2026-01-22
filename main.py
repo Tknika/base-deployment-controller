@@ -26,7 +26,6 @@ logger = logging.getLogger(__name__)
 app = create_app(
     compose_file=COMPOSE_FILE,
     env_file=ENV_FILE,
-    include_routers=True,
 )
 
 if __name__ == "__main__":
