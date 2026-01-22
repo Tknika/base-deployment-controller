@@ -71,7 +71,7 @@ Obtiene información sobre el deploy:
 curl http://localhost:8000/
 ```
 
-#### POST /up|down|stop
+#### POST /up|down|kill|stop
 Controla el deploy:
 
 ```bash
@@ -103,6 +103,12 @@ Lista el estado de todos los contenedores:
 curl http://localhost:8000/containers
 ```
 
+#### GET SSE /containers/events
+Información en tiempo real sobre los cambios de estado de los contenedores (SSE):
+```bash
+curl -N http://localhost:8000/containers/events
+```
+
 #### POST /containers/{name}/start|stop|restart
 Controla un contenedor específico:
 
@@ -119,13 +125,6 @@ const ws = new WebSocket('ws://localhost:8000/containers/mme/logs');
 ws.onmessage = (event) => {
   console.log(event.data);
 };
-```
-
-#### GET /ping
-Health check del servicio:
-
-```bash
-curl http://localhost:8000/ping
 ```
 
 ## Documentación Interactiva
