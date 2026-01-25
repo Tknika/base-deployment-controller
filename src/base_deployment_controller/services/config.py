@@ -491,6 +491,27 @@ class ConfigService:
                 success=False,
                 message=str(e)
             )
+        
+    def docker_compose_kill(self) -> ComposeActionResponse:
+        """
+        Execute docker compose kill and return the result.
+
+        Returns:
+            ComposeActionResponse with success status and message.
+        """
+        try:
+            client = self.get_docker_client()
+            client.compose.kill()
+            return ComposeActionResponse(
+                success=True,
+                message="Deployment killed successfully",
+            )
+        except Exception as e:
+            logger.error(f"Failed to kill deployment: {e}")
+            return ComposeActionResponse(
+                success=False,
+                message=str(e),
+            )
 
     def docker_compose_restart(self) -> ComposeActionResponse:
         """

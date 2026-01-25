@@ -1,89 +1,123 @@
 """
 Deployment management routes implemented with a class and dependency injection.
-Manages deployment-wide operations: status, up, stop, down, restart, ping.
+Manages deployment-wide operations: status, up, stop, down, restart.
 """
+import asyncio
+import json
 import logging
-from typing import Any, Dict
+from typing import AsyncIterator, Dict, Set
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import Response, StreamingResponse
 
-from ..models.deployment import DeploymentMetadata, DeploymentStatus, DeploymentInfoResponse, DeploymentPingResponse, DeploymentActionResponse
-from ..models.compose import ComposeActionResponse
+from ..models.deployment import DeploymentInfoResponse
 from ..models.environment import EnvVariable
+from ..models.task import TaskResponse, TaskDetail, TaskStatus
 from ..services.config import ConfigService
+from ..services.task_manager import TaskManager
 
 logger = logging.getLogger(__name__)
 
 
 class DeploymentRoutes:
     """
-    Root deployment router built with dependency injection.
+    Deployment router built with dependency injection.
 
-    Manages deployment-wide operations at the root endpoint and control endpoints:
-    - GET / - Get deployment status with metadata and env-vars
-    - POST /up - Start deployment
-    - POST /stop - Stop deployment
-    - POST /down - Down deployment (stop and remove containers)
-    - POST /restart - Restart deployment
-    - GET /ping - Health check
+    Manages deployment-wide operations:
+    - GET /deployment - Get deployment status with metadata and env-vars
+    - POST /deployment/up - Start deployment (async)
+    - POST /deployment/stop - Stop deployment (async)
+    - POST /deployment/down - Down deployment (async)
+    - POST /deployment/kill - Kill deployment (async)
+    - POST /deployment/restart - Restart deployment (async)
+    - GET /deployment/tasks/{task_id} - Get task status
+    - GET /deployment/tasks/{task_id}/stream - SSE stream of task progress
 
     Args:
         config: Instance of `ConfigService` for Compose and Docker access.
+        task_manager: Instance of `TaskManager` for async operations.
 
     Attributes:
         config: Injected configuration service.
-        router: Instance of `APIRouter` with root endpoints.
+        task_manager: Injected task manager service.
+        router: Instance of `APIRouter` with /deployment endpoints.
     """
 
-    def __init__(self, config: ConfigService) -> None:
+    def __init__(self, config: ConfigService, task_manager: TaskManager) -> None:
         """
         Initialize deployment routes.
 
         Args:
             config: Configuration service instance for dependency injection.
+            task_manager: Task manager instance for dependency injection.
         """
         self.config = config
+        self.task_manager = task_manager
         self.router = self._build_router()
 
     def _build_router(self) -> APIRouter:
         """
-        Build and configure the router with deployment endpoints at root level.
+        Build and configure the router with deployment endpoints.
 
         Returns:
             APIRouter configured with GET and POST handlers.
         """
-        router = APIRouter(tags=["Deployment"])
-        # Note: These routes will be registered without prefix in main.py
-        # to mount them at root level: /, /ping, /up, /stop, /down, /restart
+        router = APIRouter(prefix="/deployment", tags=["Deployment"])
+
+        # GET /deployment - deployment info
         router.add_api_route(
-            "/",
+            "",
             self.get_deployment_info,
             methods=["GET"],
+            response_model=DeploymentInfoResponse,
         )
-        router.add_api_route(
-            "/ping",
-            self.ping,
-            methods=["GET"],
-        )
+        # POST /deployment/up - start deployment
         router.add_api_route(
             "/up",
             self.deploy_up,
             methods=["POST"],
+            status_code=202,
         )
+        # POST /deployment/stop - stop deployment
         router.add_api_route(
             "/stop",
             self.deploy_stop,
             methods=["POST"],
+            status_code=202,
         )
+        # POST /deployment/down - down deployment
         router.add_api_route(
             "/down",
             self.deploy_down,
             methods=["POST"],
+            status_code=202,
         )
+        # POST /deployment/kill - kill deployment
+        router.add_api_route(
+            "/kill",
+            self.deploy_kill,
+            methods=["POST"],
+            status_code=202,
+        )
+        # POST /deployment/restart - restart deployment
         router.add_api_route(
             "/restart",
             self.deploy_restart,
             methods=["POST"],
+            status_code=202,
+        )
+        # GET /deployment/tasks/{task_id} - get task status
+        router.add_api_route(
+            "/tasks/{task_id}",
+            self.get_task_status,
+            methods=["GET"],
+            response_model=TaskDetail,
+        )
+        # GET /deployment/tasks/{task_id}/stream - SSE stream
+        router.add_api_route(
+            "/tasks/{task_id}/stream",
+            self.stream_task_progress,
+            methods=["GET"],
         )
         return router
 
@@ -101,10 +135,10 @@ class DeploymentRoutes:
             logger.debug("Fetching deployment info")
 
             # Get metadata
-            metadata_dict: DeploymentMetadata = self.config.get_deployment_metadata()
+            metadata_dict = self.config.get_deployment_metadata()
 
             # Get status
-            status: DeploymentStatus = self.config.get_deployment_status()
+            status = self.config.get_deployment_status()
 
             # Get environment variables
             schema = self.config.get_env_vars_schema()
@@ -122,160 +156,357 @@ class DeploymentRoutes:
                     advanced=var_schema.get("advanced", False),
                 )
 
-            logger.info("Successfully retrieved deployment info")           
+            logger.info("Successfully retrieved deployment info")
             return DeploymentInfoResponse(
-                metadata=metadata_dict,
-                status=status,
-                env_vars=env_vars)
+                metadata=metadata_dict, status=status, env_vars=env_vars
+            )
         except Exception as e:
             logger.error(f"Failed to get deployment info: {e}")
             raise HTTPException(
                 status_code=500, detail=f"Failed to get deployment info: {e}"
             )
 
-    async def ping(self) -> DeploymentPingResponse:
+    async def deploy_up(self, request: Request) -> Response:
         """
-        Health check endpoint.
+        Start the deployment (docker compose up) asynchronously.
+
+        Returns 202 Accepted with task_id for tracking progress.
+
+        Args:
+            request: FastAPI request object (for building Location header).
 
         Returns:
-            DeploymentPingResponse indicating API is operational.
+            Response with 202 status and TaskResponse body.
         """
-        logger.debug("Ping request received")
-        return DeploymentPingResponse(success=True, message="API is operational")
+        logger.info("Starting deployment (up) - asynchronous")
 
+        # Create async task
+        task_id = await self.task_manager.create_task(
+            operation="up",
+            func=lambda: self._execute_compose_up(task_id),
+        )
 
-    async def deploy_up(self) -> DeploymentActionResponse:
+        # Build Location header
+        location = str(request.url_for("get_task_status", task_id=task_id))
+
+        logger.info(f"Deployment up task created: {task_id}")
+
+        # Return 202 Accepted
+        return Response(
+            status_code=202,
+            content=TaskResponse(
+                task_id=task_id, status=TaskStatus.RUNNING
+            ).model_dump_json(),
+            media_type="application/json",
+            headers={"Location": location},
+        )
+
+    async def deploy_stop(self, request: Request) -> Response:
         """
-        Start the deployment (docker compose up).
+        Stop the deployment (docker compose stop) asynchronously.
+
+        Returns 202 Accepted with task_id for tracking progress.
+
+        Args:
+            request: FastAPI request object (for building Location header).
 
         Returns:
-            DeploymentActionResponse with success status and message.
+            Response with 202 status and TaskResponse body.
+        """
+        logger.info("Stopping deployment - asynchronous")
+
+        # Create async task
+        task_id = await self.task_manager.create_task(
+            operation="stop",
+            func=lambda: self._execute_compose_stop(task_id),
+        )
+
+        # Build Location header
+        location = str(request.url_for("get_task_status", task_id=task_id))
+
+        logger.info(f"Deployment stop task created: {task_id}")
+
+        # Return 202 Accepted
+        return Response(
+            status_code=202,
+            content=TaskResponse(
+                task_id=task_id, status=TaskStatus.RUNNING
+            ).model_dump_json(),
+            media_type="application/json",
+            headers={"Location": location},
+        )
+
+    async def deploy_down(self, request: Request) -> Response:
+        """
+        Down the deployment (docker compose down) asynchronously.
+
+        Returns 202 Accepted with task_id for tracking progress.
+
+        Args:
+            request: FastAPI request object (for building Location header).
+
+        Returns:
+            Response with 202 status and TaskResponse body.
+        """
+        logger.info("Taking down deployment - asynchronous")
+
+        # Create async task
+        task_id = await self.task_manager.create_task(
+            operation="down",
+            func=lambda: self._execute_compose_down(task_id),
+        )
+
+        # Build Location header
+        location = str(request.url_for("get_task_status", task_id=task_id))
+
+        logger.info(f"Deployment down task created: {task_id}")
+
+        # Return 202 Accepted
+        return Response(
+            status_code=202,
+            content=TaskResponse(
+                task_id=task_id, status=TaskStatus.RUNNING
+            ).model_dump_json(),
+            media_type="application/json",
+            headers={"Location": location},
+        )
+    async def deploy_kill(self, request: Request) -> Response:
+        """
+        Kill the deployment (docker compose kill) asynchronously.
+
+        Returns 202 Accepted with task_id for tracking progress.
+
+        Args:
+            request: FastAPI request object (for building Location header).
+
+        Returns:
+            Response with 202 status and TaskResponse body.
+        """
+        logger.info("Killing deployment - asynchronous")
+
+        # Create async task
+        task_id = await self.task_manager.create_task(
+            operation="kill",
+            func=lambda: self._execute_compose_kill(task_id),
+        )
+
+        # Build Location header
+        location = str(request.url_for("get_task_status", task_id=task_id))
+
+        logger.info(f"Deployment kill task created: {task_id}")
+
+        # Return 202 Accepted
+        return Response(
+            status_code=202,
+            content=TaskResponse(
+                task_id=task_id, status=TaskStatus.RUNNING
+            ).model_dump_json(),
+            media_type="application/json",
+            headers={"Location": location},
+        )
+
+    async def deploy_restart(self, request: Request) -> Response:
+        """
+        Restart the deployment (docker compose stop + up) asynchronously.
+
+        Returns 202 Accepted with task_id for tracking progress.
+
+        Args:
+            request: FastAPI request object (for building Location header).
+
+        Returns:
+            Response with 202 status and TaskResponse body.
+        """
+        logger.info("Restarting deployment - asynchronous")
+
+        # Create async task
+        task_id = await self.task_manager.create_task(
+            operation="restart",
+            func=lambda: self._execute_compose_restart(task_id),
+        )
+
+        # Build Location header
+        location = str(request.url_for("get_task_status", task_id=task_id))
+
+        logger.info(f"Deployment restart task created: {task_id}")
+
+        # Return 202 Accepted
+        return Response(
+            status_code=202,
+            content=TaskResponse(
+                task_id=task_id, status=TaskStatus.RUNNING
+            ).model_dump_json(),
+            media_type="application/json",
+            headers={"Location": location},
+        )
+
+    async def get_task_status(self, task_id: str) -> TaskDetail:
+        """
+        Get the current status of a deployment task.
+
+        Args:
+            task_id: The unique identifier of the task.
+
+        Returns:
+            TaskDetail with current task status, progress, and result.
 
         Raises:
-            HTTPException: If deployment startup fails.
+            HTTPException: If task not found.
         """
-        try:
-            logger.info("Starting deployment (up)")
-            result: ComposeActionResponse = self.config.docker_compose_up()
+        task = self.task_manager.get_task(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
-            if not result.success:
-                logger.error(f"Failed to start deployment: {result.message}")
-                raise HTTPException(
-                    status_code=500, detail=result.message
-                )
+        return task
 
-            logger.info("Deployment started successfully")
-            return DeploymentActionResponse(
-                success=result.success,
-                action="up",
-                message=result.message
-            )
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(f"Error starting deployment: {e}")
-            raise HTTPException(
-                status_code=500, detail=f"Failed to start deployment: {str(e)}"
-            )
-
-    async def deploy_stop(self) -> DeploymentActionResponse:
+    async def stream_task_progress(self, task_id: str) -> StreamingResponse:
         """
-        Stop the deployment (docker compose stop).
+        Stream task progress updates via Server-Sent Events (SSE).
+
+        Args:
+            task_id: The unique identifier of the task.
 
         Returns:
-            DeploymentActionResponse with success status and message.
+            StreamingResponse with SSE stream of task updates.
 
         Raises:
-            HTTPException: If deployment stop fails.
+            HTTPException: If task not found.
+        """
+        task = self.task_manager.get_task(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+
+        async def event_generator() -> AsyncIterator[str]:
+            """Generate SSE events for task updates."""
+            last_update = None
+
+            while True:
+                current_task = self.task_manager.get_task(task_id)
+                if not current_task:
+                    yield f"event: error\ndata: {json.dumps({'error': 'Task not found'})}\n\n"
+                    break
+
+                # Send update if task changed
+                if current_task.model_dump() != last_update:
+                    last_update = current_task.model_dump()
+                    yield f"data: {current_task.model_dump_json()}\n\n"
+
+                # If task completed or failed, send final event and stop
+                if current_task.task_status in [
+                    TaskStatus.COMPLETED,
+                    TaskStatus.FAILED,
+                ]:
+                    yield f"event: done\ndata: {current_task.model_dump_json()}\n\n"
+                    break
+
+                # Wait before next check
+                await asyncio.sleep(0.5)
+
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    def _execute_compose_up(self, task_id: str) -> None:
+        """
+        Execute docker compose up.
+
+        Runs in thread executor. TaskManager auto-manages state transitions:
+        PENDING -> RUNNING (on start) -> COMPLETED (success) or FAILED (exception).
+        Any exception is caught and its message stored in task.error.
         """
         try:
-            logger.info("Stopping deployment")
-            result: ComposeActionResponse = self.config.docker_compose_stop()
-
+            logger.info(f"[{task_id}] Executing compose up")
+            result = self.config.docker_compose_up()
             if not result.success:
-                logger.error(f"Failed to stop deployment: {result.message}")
-                raise HTTPException(
-                    status_code=500, detail=result.message
-                )
+                raise Exception(result.message)
+            logger.info(f"[{task_id}] Compose up completed successfully")
 
-            logger.info("Deployment stopped successfully")
-            return DeploymentActionResponse(
-                success=result.success,
-                action="stop",
-                message=result.message
-            )
-        except HTTPException:
-            raise
         except Exception as e:
-            logger.error(f"Error stopping deployment: {e}")
-            raise HTTPException(
-                status_code=500, detail=f"Failed to stop deployment: {str(e)}"
-            )
+            logger.error(f"[{task_id}] Error executing compose up: {e}")
+            raise
+            
 
-    async def deploy_down(self) -> DeploymentActionResponse:
+    def _execute_compose_stop(self, task_id: str) -> None:
         """
-        Down the deployment (docker compose down and remove volumes).
+        Execute docker compose stop.
 
-        Returns:
-            DeploymentActionResponse with success status and message.
-
-        Raises:
-            HTTPException: If deployment down fails.
+        Runs in thread executor. TaskManager auto-manages state transitions:
+        PENDING -> RUNNING (on start) -> COMPLETED (success) or FAILED (exception).
+        Any exception is caught and its message stored in task.error.
         """
         try:
-            logger.info("Downing deployment (removing containers and volumes)")
-            result: ComposeActionResponse = self.config.docker_compose_down()
-
+            logger.info(f"[{task_id}] Executing compose stop")
+            result = self.config.docker_compose_stop()
             if not result.success:
-                logger.error(f"Failed to down deployment: {result.message}")
-                raise HTTPException(
-                    status_code=500, detail=result.message
-                )
+                raise Exception(result.message)
+            logger.info(f"[{task_id}] Compose stop completed successfully")
 
-            logger.info("Deployment downed successfully")
-            return DeploymentActionResponse(
-                success=result.success,
-                action="down",
-                message=result.message
-            )
-        except HTTPException:
-            raise
         except Exception as e:
-            logger.error(f"Error downing deployment: {e}")
-            raise HTTPException(
-                status_code=500, detail=f"Failed to down deployment: {str(e)}"
-            )
+            logger.error(f"[{task_id}] Error executing compose stop: {e}")
+            raise
 
-    async def deploy_restart(self) -> DeploymentActionResponse:
+    def _execute_compose_down(self, task_id: str) -> None:
         """
-        Restart the deployment (docker compose down then up).
+        Execute docker compose down.
 
-        Returns:
-            DeploymentActionResponse with success status and message.
-
-        Raises:
-            HTTPException: If deployment restart fails.
+        Runs in thread executor. TaskManager auto-manages state transitions:
+        PENDING -> RUNNING (on start) -> COMPLETED (success) or FAILED (exception).
+        Any exception is caught and its message stored in task.error.
         """
         try:
-            logger.info("Restarting deployment")
-            result: ComposeActionResponse = self.config.docker_compose_restart()
-
+            logger.info(f"[{task_id}] Executing compose down")
+            result = self.config.docker_compose_down()
             if not result.success:
-                logger.error(f"Failed to stop deployment (while restarting): {result.message}")
-                raise HTTPException(
-                    status_code=500, detail=result.message
-                )
+                raise Exception(result.message)
+            logger.info(f"[{task_id}] Compose down completed successfully")
 
-            logger.info("Deployment restarted successfully")
-            return DeploymentActionResponse(
-                success=result.success,
-                action="restart",
-                message=result.message
-            )
-        except HTTPException:
-            raise
         except Exception as e:
-            logger.error(f"Error restarting deployment: {e}")
-            raise HTTPException(
-                status_code=500, detail=f"Failed to restart deployment: {str(e)}"
-            )
+            logger.error(f"[{task_id}] Error executing compose down: {e}")
+            raise
+
+    def _execute_compose_kill(self, task_id: str) -> None:
+        """
+        Execute docker compose kill.
+
+        Runs in thread executor. TaskManager auto-manages state transitions:
+        PENDING -> RUNNING (on start) -> COMPLETED (success) or FAILED (exception).
+        Any exception is caught and its message stored in task.error.
+        """
+        try:
+            logger.info(f"[{task_id}] Executing compose kill")
+            result = self.config.docker_compose_kill()
+            if not result.success:
+                raise Exception(result.message)
+            logger.info(f"[{task_id}] Compose kill completed successfully")
+
+        except Exception as e:
+            logger.error(f"[{task_id}] Error executing compose kill: {e}")
+            raise
+
+    def _execute_compose_restart(self, task_id: str) -> None:
+        """
+        Execute docker compose restart (stop + up).
+
+        Runs in thread executor. TaskManager auto-manages state transitions:
+        PENDING -> RUNNING (on start) -> COMPLETED (success) or FAILED (exception).
+        Any exception is caught and its message stored in task.error.
+        """
+        try:
+            logger.info(f"[{task_id}] Executing compose restart")
+            stop_result = self.config.docker_compose_stop()
+            if not stop_result.success:
+                raise Exception(stop_result.message)
+            up_result = self.config.docker_compose_up()
+            if not up_result.success:
+                raise Exception(up_result.message)
+            logger.info(f"[{task_id}] Compose restart completed successfully")
+
+        except Exception as e:
+            logger.error(f"[{task_id}] Error executing compose restart: {e}")
+            raise

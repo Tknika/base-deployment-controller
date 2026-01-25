@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "base-deployment-controller"
-version = "0.1.0"
+version = "0.2.0"
 description = "REST API to control the basic operations of a deployment"
 readme = "README.md"
 requires-python = ">=3.8"

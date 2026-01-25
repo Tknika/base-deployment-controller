@@ -4,6 +4,9 @@ from typing import List, Tuple
 from fastapi import APIRouter, FastAPI
 
 from .services.config import ConfigService
+from .services.task_manager import TaskManager
+from .services.status_event_manager import StatusEventManager
+from .routers.api import APIRoutes
 from .routers.environment import EnvRoutes
 from .routers.container import ContainerRoutes
 from .routers.deployment import DeploymentRoutes
@@ -76,10 +79,15 @@ class AppBuilder:
         )
 
         config_service = ConfigService(self.compose_file, self.env_file)
-        env_routes = EnvRoutes(config_service)
-        container_routes = ContainerRoutes(config_service)
-        deployment_routes = DeploymentRoutes(config_service)
+        task_manager = TaskManager(ttl=3600)
+        status_events = StatusEventManager(config_service)
+        
+        api_routes = APIRoutes()
+        env_routes = EnvRoutes(config_service, task_manager)
+        container_routes = ContainerRoutes(config_service, task_manager, status_events)
+        deployment_routes = DeploymentRoutes(config_service, task_manager)
 
+        app.include_router(api_routes.router)
         app.include_router(env_routes.router)
         app.include_router(container_routes.router)
         app.include_router(deployment_routes.router)

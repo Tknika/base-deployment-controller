@@ -20,12 +20,3 @@ class ContainersInfoResponse(BaseModel):
     """Response with list of containers and their current status."""
 
     containers: list[ContainerInfo] = Field(..., description="List of containers")
-
-
-class ContainerControlResponse(BaseModel):
-    """Response after executing a control action on a container."""
-
-    success: bool = Field(..., description="Action success status")
-    container: str = Field(..., description="Container name")
-    action: str = Field(..., description="Action performed")
-    message: str = Field(..., description="Status message")

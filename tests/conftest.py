@@ -4,16 +4,28 @@ Pytest configuration and shared fixtures for integration tests.
 import os
 import subprocess
 import time
+import json
 from pathlib import Path
+from typing import Dict, Any, AsyncIterator
 
 import pytest
 import requests
 
 
 @pytest.fixture(scope="session")
-def api_url():
-    """Base URL for the API."""
-    return "http://localhost:8000"
+def server_port() -> int:
+    """Find and reserve a free TCP port for the test server."""
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        return s.getsockname()[1]
+
+
+@pytest.fixture(scope="session")
+def api_url(server_port: int):
+    """Base URL for the API using a dynamically allocated port."""
+    return f"http://127.0.0.1:{server_port}"
 
 
 @pytest.fixture(scope="session")
@@ -22,8 +34,35 @@ def compose_data_dir():
     return Path("data")
 
 
+def wait_for_api_ready(api_url: str, timeout: int = 60) -> bool:
+    """
+    Wait for API to be ready, checking the root endpoint.
+    
+    Args:
+        api_url: Base API URL
+        timeout: Maximum wait time in seconds
+        
+    Returns:
+        True if API is ready, raises otherwise
+    """
+    session = requests.Session()
+    start_time = time.time()
+    
+    while time.time() - start_time < timeout:
+        try:
+            response = session.get(f"{api_url}/", timeout=2)
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("status") == "operational":
+                    return True
+        except requests.RequestException:
+            time.sleep(0.5)
+    
+    pytest.fail(f"Server did not start within {timeout} seconds")
+
+
 @pytest.fixture(scope="session")
-def api_server(api_url):
+def api_server(api_url, server_port: int):
     """
     Start the FastAPI server for the test session.
     
@@ -41,7 +80,7 @@ def api_server(api_url):
     process = subprocess.Popen(
         [sys.executable, "-m", "uvicorn", 
          "main:app",
-         "--host", "0.0.0.0", "--port", "8000"],
+         "--host", "127.0.0.1", "--port", str(server_port)],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -49,21 +88,7 @@ def api_server(api_url):
     )
     
     # Wait for server to be ready
-    session = requests.Session()
-    start_time = time.time()
-    timeout = 60
-    
-    while time.time() - start_time < timeout:
-        try:
-            response = session.get(f"{api_url}/ping", timeout=2)
-            if response.status_code == 200:
-                break
-        except requests.RequestException:
-            time.sleep(0.5)
-    else:
-        process.terminate()
-        process.wait()
-        pytest.fail(f"Server did not start within {timeout} seconds")
+    wait_for_api_ready(api_url)
     
     yield process
     
@@ -128,3 +153,8 @@ def check_dependencies(compose_data_dir):
         pytest.fail(f"Compose file not found: {compose_file}")
     
     return True
+
+
+# Migrate test helper to tests/utils.py for importability in tests
+from tests.utils import stream_task_updates  # noqa: F401
+
