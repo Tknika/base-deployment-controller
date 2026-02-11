@@ -3,8 +3,49 @@ Test helper utilities.
 """
 from typing import Dict, Any, Optional
 import time
+import threading
 import json
 import requests
+
+
+def monitor_deployment_status(api_url: str, stop_event: threading.Event, timeout: int = 120):
+    """
+    Background worker to monitor /deployment/status SSE and print changes.
+    """
+    session = requests.Session()
+    last_status = None
+    endpoint = f"{api_url}/deployment/status"
+
+    try:
+        response = session.get(endpoint, stream=True, timeout=timeout)
+        response.raise_for_status()
+
+        print(f"\n[MONITOR] Subscribed to {endpoint}")
+        
+        for line in response.iter_lines():
+            if stop_event.is_set():
+                break
+
+            if not line or line.startswith(b':'): # Skip empty lines and keep-alives
+                continue
+
+            if line.startswith(b'data:'):
+                json_str = line[5:].strip()
+                try:
+                    data = json.loads(json_str)
+                    status = data.get("status")
+                    if status != last_status:
+                        print(f"\n>>> [MONITOR] Deployment Status Change: {last_status} -> {status}")
+                        last_status = status
+                except json.JSONDecodeError:
+                    pass
+                    
+    except Exception as e:
+        if not stop_event.is_set():
+            print(f"\n[MONITOR] Error: {e}")
+    finally:
+        session.close()
+        print("\n[MONITOR] Unsubscribed from /deployment/status")
 
 
 def stream_task_updates(

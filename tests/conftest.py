@@ -15,11 +15,7 @@ import requests
 @pytest.fixture(scope="session")
 def server_port() -> int:
     """Find and reserve a free TCP port for the test server."""
-    import socket
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        return s.getsockname()[1]
+    return 8000
 
 
 @pytest.fixture(scope="session")
