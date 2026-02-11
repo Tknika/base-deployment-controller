@@ -31,4 +31,4 @@ app = create_app(
 if __name__ == "__main__":
     logger.info(f"Starting Base Deployment Controller on http://0.0.0.0:{API_PORT}")
     logger.info(f"Log level set to: {LOG_LEVEL}")
-    uvicorn.run("main:app", host="0.0.0.0", port=API_PORT, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=API_PORT, reload=False, log_config=None)

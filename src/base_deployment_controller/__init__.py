@@ -10,6 +10,7 @@ from .routers.api import APIRoutes
 from .routers.environment import EnvRoutes
 from .routers.container import ContainerRoutes
 from .services.status_event_manager import StatusEventManager
+from .services.deployment_status_monitor import DeploymentStatusMonitor
 from .routers.deployment import DeploymentRoutes
 from .builder import AppBuilder
 
@@ -65,8 +66,12 @@ def create_app(
     api_routes = APIRoutes()
     env_routes = EnvRoutes(config_service, task_manager)
     status_events = StatusEventManager(config_service)
+    deployment_status_monitor = DeploymentStatusMonitor(
+        config_service,
+        status_events=status_events,
+    )
     container_routes = ContainerRoutes(config_service, task_manager, status_events)
-    deployment_routes = DeploymentRoutes(config_service, task_manager)
+    deployment_routes = DeploymentRoutes(config_service, task_manager, deployment_status_monitor)
 
     app.include_router(api_routes.router)
     app.include_router(env_routes.router)

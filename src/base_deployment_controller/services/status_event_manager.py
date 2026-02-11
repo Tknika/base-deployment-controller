@@ -99,7 +99,7 @@ class StatusEventManager:
     def _monitor_loop(self) -> None:
         """Background thread: listen to Docker events and broadcast mapped state events."""
         try:
-            logger.info("StatusEventManager: starting Docker event monitor")
+            logger.debug("StatusEventManager: starting Docker event monitor")
             docker = self.config.get_docker_client()
             action_to_state = {
                 "kill": ServiceState.STOPPING,
@@ -113,10 +113,10 @@ class StatusEventManager:
                 "build": ServiceState.CREATING,
             }
             
-            logger.info("StatusEventManager: listening to docker.system.events()")
+            logger.debug("StatusEventManager: listening to docker.system.events()")
             for event in docker.system.events(filters={"type": "container"}):
                 if self._stop_event.is_set():
-                    logger.info("StatusEventManager: stop event received, breaking")
+                    logger.debug("StatusEventManager: stop event received, breaking")
                     break
                 try:
                     action = getattr(event, "action", "").lower()
@@ -136,7 +136,7 @@ class StatusEventManager:
                     prev_state = self._last_state.get(name)
                     self._last_state[name] = new_state
                     
-                    logger.info(f"StatusEventManager: {name} state={new_state} (action={action})")
+                    logger.debug(f"StatusEventManager: {name} state={new_state} (action={action})")
                     
                     ev = ContainerStatusEvent(
                         container_name=name,

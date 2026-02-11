@@ -5,15 +5,18 @@ Manages deployment-wide operations: status, up, stop, down, restart.
 import asyncio
 import json
 import logging
-from typing import AsyncIterator, Dict, Set
+from datetime import datetime, timezone
+from typing import AsyncIterator, Dict, Set, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 
 from ..models.deployment import DeploymentInfoResponse
 from ..models.environment import EnvVariable
+from ..models.events import DeploymentStatusEvent
 from ..models.task import TaskResponse, TaskDetail, TaskStatus
 from ..services.config import ConfigService
+from ..services.deployment_status_monitor import DeploymentStatusMonitor
 from ..services.task_manager import TaskManager
 
 logger = logging.getLogger(__name__)
@@ -25,6 +28,7 @@ class DeploymentRoutes:
 
     Manages deployment-wide operations:
     - GET /deployment - Get deployment status with metadata and env-vars
+    - GET /deployment/status - SSE stream of deployment status changes
     - POST /deployment/up - Start deployment (async)
     - POST /deployment/stop - Stop deployment (async)
     - POST /deployment/down - Down deployment (async)
@@ -36,23 +40,32 @@ class DeploymentRoutes:
     Args:
         config: Instance of `ConfigService` for Compose and Docker access.
         task_manager: Instance of `TaskManager` for async operations.
+        status_monitor: Instance of `DeploymentStatusMonitor` for status monitoring.
 
     Attributes:
         config: Injected configuration service.
         task_manager: Injected task manager service.
+        status_monitor: Injected deployment status monitor.
         router: Instance of `APIRouter` with /deployment endpoints.
     """
 
-    def __init__(self, config: ConfigService, task_manager: TaskManager) -> None:
+    def __init__(
+        self, 
+        config: ConfigService, 
+        task_manager: TaskManager,
+        status_monitor: DeploymentStatusMonitor,
+    ) -> None:
         """
         Initialize deployment routes.
 
         Args:
             config: Configuration service instance for dependency injection.
             task_manager: Task manager instance for dependency injection.
+            status_monitor: Deployment status monitor instance for dependency injection.
         """
         self.config = config
         self.task_manager = task_manager
+        self.status_monitor = status_monitor
         self.router = self._build_router()
 
     def _build_router(self) -> APIRouter:
@@ -70,6 +83,12 @@ class DeploymentRoutes:
             self.get_deployment_info,
             methods=["GET"],
             response_model=DeploymentInfoResponse,
+        )
+        # GET /deployment/status - SSE stream of deployment status changes
+        router.add_api_route(
+            "/status",
+            self.stream_deployment_status,
+            methods=["GET"],
         )
         # POST /deployment/up - start deployment
         router.add_api_route(
@@ -401,6 +420,72 @@ class DeploymentRoutes:
 
                 # Wait before next check
                 await asyncio.sleep(0.5)
+
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    async def stream_deployment_status(self) -> StreamingResponse:
+        """
+        Stream deployment status changes via Server-Sent Events (SSE).
+
+        Monitors deployment status and sends updates only when the status changes.
+        Sends the current status immediately upon connection.
+
+        Returns:
+            StreamingResponse with SSE stream of deployment status updates.
+        """
+        logger.info("Client connected to deployment status stream")
+
+        async def event_generator() -> AsyncIterator[str]:
+            """Generate SSE events for deployment status changes."""
+            q: Optional[asyncio.Queue] = None
+            try:
+                # Subscribe and get current status
+                q, current_status = await self.status_monitor.subscribe()
+                
+                # Send current status immediately if available
+                if current_status:
+                    event = DeploymentStatusEvent(
+                        status=current_status,
+                        previous_status=None,
+                        timestamp=datetime.now(timezone.utc),
+                    )
+                    yield f"data: {event.model_dump_json()}\n\n"
+                    logger.debug(f"Sent initial deployment status: {current_status}")
+
+                # Stream status changes
+                while True:
+                    try:
+                        # Get next event from queue (with timeout to allow cancellation)
+                        event = await asyncio.wait_for(q.get(), timeout=5.0)
+                        yield f"data: {event.model_dump_json()}\n\n"
+                        logger.debug(f"Sent deployment status change: {event.status}")
+                    except asyncio.TimeoutError:
+                        # Send keep-alive comment to prevent connection timeout
+                        yield ": keep-alive\n\n"
+                    except asyncio.CancelledError:
+                        logger.info("Deployment status stream cancelled by client")
+                        break
+                    except Exception as e:
+                        logger.error(f"Error in deployment status stream: {e}")
+                        yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
+                        break
+
+            except Exception as e:
+                logger.error(f"Error subscribing to deployment status: {e}")
+                yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
+            finally:
+                # Unsubscribe when client disconnects
+                if q is not None:
+                    await self.status_monitor.unsubscribe(q)
+                logger.info("Client disconnected from deployment status stream")
 
         return StreamingResponse(
             event_generator(),

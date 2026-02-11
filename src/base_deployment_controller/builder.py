@@ -6,6 +6,7 @@ from fastapi import APIRouter, FastAPI
 from .services.config import ConfigService
 from .services.task_manager import TaskManager
 from .services.status_event_manager import StatusEventManager
+from .services.deployment_status_monitor import DeploymentStatusMonitor
 from .routers.api import APIRoutes
 from .routers.environment import EnvRoutes
 from .routers.container import ContainerRoutes
@@ -81,11 +82,15 @@ class AppBuilder:
         config_service = ConfigService(self.compose_file, self.env_file)
         task_manager = TaskManager(ttl=3600)
         status_events = StatusEventManager(config_service)
+        deployment_status_monitor = DeploymentStatusMonitor(
+            config_service,
+            status_events=status_events,
+        )
         
         api_routes = APIRoutes()
         env_routes = EnvRoutes(config_service, task_manager)
         container_routes = ContainerRoutes(config_service, task_manager, status_events)
-        deployment_routes = DeploymentRoutes(config_service, task_manager)
+        deployment_routes = DeploymentRoutes(config_service, task_manager, deployment_status_monitor)
 
         app.include_router(api_routes.router)
         app.include_router(env_routes.router)

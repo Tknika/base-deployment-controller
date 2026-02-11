@@ -1,11 +1,12 @@
 """
-Event models for container status streaming via SSE.
+Event models for container and deployment status streaming via SSE.
 """
 from datetime import datetime
 from enum import Enum
 from typing import Optional
 
 from pydantic import BaseModel, Field
+from .deployment import DeploymentStatus
 
 
 class ServiceState(str, Enum):
@@ -31,4 +32,12 @@ class ContainerStatusEvent(BaseModel):
     state: ServiceState = Field(..., description="New state")
     prev_state: Optional[ServiceState] = Field(None, description="Previous state if known")
     action: str = Field(..., description="Docker event action that triggered the state change")
+    timestamp: datetime = Field(..., description="Event timestamp")
+
+
+class DeploymentStatusEvent(BaseModel):
+    """Deployment status change event for SSE streaming."""
+
+    status: DeploymentStatus = Field(..., description="Current deployment status")
+    previous_status: Optional[DeploymentStatus] = Field(None, description="Previous deployment status if known")
     timestamp: datetime = Field(..., description="Event timestamp")
