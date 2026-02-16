@@ -87,13 +87,13 @@ curl http://localhost:8000/envs
 ```
 
 #### PUT /envs
-Actualiza variables de entorno. Usa `restart_services` (por defecto `true`) para controlar si se reinician los servicios afectados.
+Actualiza variables de entorno. Usa `recreate_services` (por defecto `true`) para controlar si se recrean los servicios afectados.
 
 ```bash
 # Actualización múltiple
 curl -X PUT http://localhost:8000/envs \
   -H "Content-Type: application/json" \
-  -d '{"variables": {"MCC": "214", "MNC": "07"}, "restart_services": false}'
+  -d '{"variables": {"MCC": "214", "MNC": "07"}, "recreate_services": false}'
 ```
 
 #### GET /containers

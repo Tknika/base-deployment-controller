@@ -30,7 +30,7 @@ class EnvRoutes:
 
     Provides endpoints for retrieving and updating environment variables
     defined in the compose.yaml x-env-vars schema. Updates are async when
-    services need to be restarted.
+    services need to be recreated.
 
     Args:
         config: Instance of `ConfigService` for file access and validation.
@@ -134,11 +134,11 @@ class EnvRoutes:
         """
         Update environment variables in .env file asynchronously.
 
-        When restart_services is True, the operation runs asynchronously
+        When recreate_services is True, the operation runs asynchronously
         and returns 202 Accepted with a task_id.
 
         Args:
-            request: Bulk update request with variables and restart flag.
+            request: Bulk update request with variables and recreate flag.
             fastapi_request: FastAPI request object (for building Location header).
 
         Returns:
@@ -176,11 +176,11 @@ class EnvRoutes:
 
             logger.info(f"Updating {len(updates)} environment variables")
 
-            # Create async task for update + restart
+            # Create async task for update + recreate
             task_id = await self.task_manager.create_task(
                 operation="env_update",
                 func=lambda: self._execute_env_update(
-                    task_id, updates, request.restart_services
+                    task_id, updates, request.recreate_services
                 ),
             )
 
@@ -287,10 +287,10 @@ class EnvRoutes:
         self,
         task_id: str,
         updates: dict[str, str],
-        restart_services: bool,
+        recreate_services: bool,
     ) -> EnvUpdateResponse:
         """
-        Execute environment variable update with optional service restart.
+        Execute environment variable update with optional service recreation.
 
         Runs in thread executor. TaskManager auto-manages state transitions:
         PENDING -> RUNNING (on start) -> COMPLETED (success) or FAILED (exception).
@@ -299,13 +299,13 @@ class EnvRoutes:
         Args:
             task_id: Task identifier (for logging).
             updates: Dict of variables to update.
-            restart_services: Whether to restart affected services.
+            recreate_services: Whether to recreate affected services.
 
         Returns:
             EnvUpdateResponse with update results.
 
         Raises:
-            Exception: On update/restart failure. Message stored in task.error.
+            Exception: On update/recreate failure. Message stored in task.error.
         """
         try:
             # Update .env file
@@ -315,20 +315,20 @@ class EnvRoutes:
             # Build updated variables list for response
             updated_var_names = list(updates.keys())
 
-            # Restart services if requested
-            restart_results: dict[str, bool] = {}
-            if restart_services:
-                # Compute affected services and restart via ConfigService
+            # Recreate services if requested
+            recreate_results: dict[str, bool] = {}
+            if recreate_services:
+                # Compute affected services and recreate via ConfigService
                 affected_services = self.config.get_affected_services(updated_var_names)
-                logger.info(f"[{task_id}] Restarting {len(affected_services)} affected services")
-                restart_results = self.config.restart_services(affected_services)
+                logger.info(f"[{task_id}] Recreating {len(affected_services)} affected services")
+                recreate_results = self.config.recreate_services(affected_services)
 
             logger.info(f"[{task_id}] Environment update completed successfully")
             return EnvUpdateResponse(
                 success=True,
                 message=f"Updated {len(updates)} environment variables",
                 updated=updated_var_names,
-                restarted_services=restart_results,
+                recreated_services=recreate_results,
             )
         except Exception as e:
             logger.error(f"[{task_id}] Error executing environment update: {e}")
@@ -336,7 +336,7 @@ class EnvRoutes:
                 success=False,
                 message=f"Failed to update environment variables: {str(e)}",
                 updated=[],
-                restarted_services={},
+                recreated_services={},
             )
 
     # Service-state updates removed; tasks no longer track per-service states.

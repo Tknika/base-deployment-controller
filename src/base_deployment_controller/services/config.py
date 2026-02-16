@@ -326,15 +326,15 @@ class ConfigService:
             affected_services.update(services)
         return list(affected_services)
 
-    def restart_services(self, service_names: List[str]) -> Dict[str, bool]:
+    def recreate_services(self, service_names: List[str]) -> Dict[str, bool]:
         """
-        Restart specified Docker services/containers.
+        Recreate specified Docker services/containers.
 
         Args:
-            service_names: List of service names from compose.yaml to restart.
+            service_names: List of service names from compose.yaml to recreate.
 
         Returns:
-            Dict mapping service names to restart success status (True/False).
+            Dict mapping service names to recreate success status (True/False).
         """
         results: Dict[str, bool] = {}
 
@@ -353,23 +353,26 @@ class ConfigService:
 
                 try:
                     if client.container.exists(container_name):
-                        # Only restart if container exists
+                        # Only recreate if container exists
                         container_inspect = client.container.inspect(container_name)
                         if container_inspect.state.status == "running":
-                            client.container.restart(container_name)
+                            # Recreate service container to apply environment changes.
+                            # Equivalent intent to: docker compose rm -f -s <service> && docker compose up -d <service>
+                            client.compose.rm(services=[service_name], stop=True)
+                            client.compose.up(detach=True, services=[service_name])
                             results[service_name] = True
                         else:
-                            # Container exists but not running, don't restart
+                            # Container exists but not running, don't recreate
                             results[service_name] = False
                     else:
-                        # Container doesn't exist, can't restart
+                        # Container doesn't exist, can't recreate
                         results[service_name] = False
                 except Exception as e:
-                    logger.error(f"Error restarting service {service_name}: {e}")
+                    logger.error(f"Error recreating service {service_name}: {e}")
                     results[service_name] = False
 
         except Exception as e:
-            logger.error(f"Error in restart_services: {e}")
+            logger.error(f"Error in recreate_services: {e}")
 
         return results
 

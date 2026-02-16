@@ -23,10 +23,10 @@ class BulkEnvUpdateRequest(BaseModel):
     """Request to update multiple environment variables in bulk."""
 
     variables: dict[str, str] = Field(..., description="Variables to update")
-    restart_services: bool = Field(
+    recreate_services: bool = Field(
         default=True,
         description=(
-            "Whether to restart affected services after updating the variables."
+            "Whether to recreate affected services after updating the variables."
         ),
     )
 
@@ -37,6 +37,6 @@ class EnvUpdateResponse(BaseModel):
     success: bool = Field(..., description="Update success status")
     updated: list[str] = Field(..., description="List of updated variables")
     message: str = Field(..., description="Status message")
-    restarted_services: dict[str, bool] = Field(
-        default_factory=dict, description="Services restarted and their status"
+    recreated_services: dict[str, bool] = Field(
+        default_factory=dict, description="Services recreated and their status"
     )
