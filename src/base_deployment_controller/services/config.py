@@ -4,6 +4,7 @@ Manages reading/writing .env and compose.yaml, validation and Docker client.
 """
 from typing import Dict, Any, List, Optional
 from pathlib import Path
+import os
 import re
 import logging
 import time
@@ -52,7 +53,89 @@ class ConfigService:
         self.env_path = Path(env_file)
         self.compose_schema: Dict[str, Any] = self._load_compose_schema()
         self.compose_services: Dict[str, Any] = self._load_compose_services()
+        self.compose_schema_resolved: Dict[str, Any] = self._resolve_compose_schema()
+        self.compose_services_resolved: Dict[str, Any] = self.compose_schema_resolved.get("services", {})
         self.env_to_services_map: Dict[str, List[str]] = self._build_env_to_services_map()
+
+    def _build_interpolation_context(self) -> Dict[str, str]:
+        """Build interpolation context with .env values and environment overrides."""
+        env_file_values = {
+            key: value
+            for key, value in self.load_env_values().items()
+            if value is not None
+        }
+        # Docker Compose gives precedence to shell environment over .env values.
+        merged = {**env_file_values, **os.environ}
+        return {key: str(value) for key, value in merged.items()}
+
+    def _interpolate_string(self, value: str, context: Dict[str, str]) -> str:
+        """Interpolate a single string using common Docker Compose variable syntax."""
+        var_pattern = re.compile(r"\$\{([^}]+)\}")
+
+        def resolve_expression(expr: str) -> str:
+            match = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)(?:(:?[-+?])(.*))?$", expr)
+            if not match:
+                return "${" + expr + "}"
+
+            var_name, operator, raw_default = match.groups()
+            default = raw_default or ""
+            is_set = var_name in context
+            current = context.get(var_name, "")
+            is_non_empty = bool(current)
+
+            if operator is None:
+                return current if is_set else ""
+            if operator == ":-":
+                return current if is_non_empty else default
+            if operator == "-":
+                return current if is_set else default
+            if operator == ":+":
+                return default if is_non_empty else ""
+            if operator == "+":
+                return default if is_set else ""
+            if operator == ":?":
+                if is_non_empty:
+                    return current
+                raise ValueError(f"Missing required variable '{var_name}' for compose interpolation")
+            if operator == "?":
+                if is_set:
+                    return current
+                raise ValueError(f"Missing required variable '{var_name}' for compose interpolation")
+
+            return "${" + expr + "}"
+
+        # Keep escaped dollars as literals after interpolation.
+        literal_dollar = "__COMPOSE_LITERAL_DOLLAR__"
+        raw = value.replace("$$", literal_dollar)
+        resolved = var_pattern.sub(lambda m: resolve_expression(m.group(1)), raw)
+        return resolved.replace(literal_dollar, "$")
+
+    def _interpolate_compose_value(self, value: Any, context: Dict[str, str]) -> Any:
+        """Recursively interpolate variables in compose structures."""
+        if isinstance(value, str):
+            return self._interpolate_string(value, context)
+        if isinstance(value, list):
+            return [self._interpolate_compose_value(item, context) for item in value]
+        if isinstance(value, dict):
+            return {
+                key: self._interpolate_compose_value(item, context)
+                for key, item in value.items()
+            }
+        return value
+
+    def _resolve_compose_schema(self) -> Dict[str, Any]:
+        """
+        Return compose schema with environment variables interpolated.
+
+        If interpolation fails (e.g. missing required variable), logs a warning and
+        returns the raw schema so the API can still boot and expose diagnostics.
+        """
+        try:
+            context = self._build_interpolation_context()
+            return self._interpolate_compose_value(self.compose_schema, context)
+        except Exception as e:
+            logger.warning(f"Failed to resolve compose interpolation, using raw schema: {e}")
+            return self.compose_schema
 
     def _load_compose_schema(self) -> Dict[str, Any]:
         """
@@ -286,17 +369,19 @@ class ConfigService:
             return list(depends_on.keys())
         return depends_on
 
-    def get_container_name_by_service(self, service_name: str) -> str:
+    def get_container_name_by_service(self, service_name: str, resolved: bool = True) -> str:
         """
         Get the container name for a given service from compose.yaml.
 
         Args:
             service_name: Name of the service.
+            resolved: If True, use interpolated compose values.
 
         Returns:
             Container name if specified, else service name.
         """
-        service = self.compose_services.get(service_name, {})
+        services = self.compose_services_resolved if resolved else self.compose_services
+        service = services.get(service_name, {})
         return service.get("container_name", "")
 
     # Docker
@@ -409,7 +494,7 @@ class ConfigService:
         Returns:
             Dict with current_state, desired_state, transitioning, and last_state_change.
         """
-        services = self.compose_services
+        services = self.compose_services_resolved
         if not services:
             return DeploymentStatus.UNKNOWN
 
@@ -417,8 +502,10 @@ class ConfigService:
         running = 0
         total = 0
 
-        for service_name, service_config in services.items():
-            container_name = service_config.get("container_name", service_name)
+        for service_name in services.keys():
+            container_name = self.get_container_name_by_service(service_name, resolved=True)
+            if not container_name:
+                container_name = service_name
             total += 1
             if client.container.exists(container_name):
                 container_inspect = client.container.inspect(container_name)

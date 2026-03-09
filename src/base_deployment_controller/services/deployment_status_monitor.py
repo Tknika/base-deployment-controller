@@ -52,9 +52,11 @@ class DeploymentStatusMonitor:
         self._relevant_containers: Set[str] = set()
         self._docker_subscriber_q = None
 
-        services = self.config.compose_services or {}
-        for service_name, service_config in services.items():
-            container_name = service_config.get("container_name", service_name)
+        services = self.config.compose_services_resolved or {}
+        for service_name in services.keys():
+            container_name = self.config.get_container_name_by_service(service_name, resolved=True)
+            if not container_name:
+                container_name = service_name
             self._relevant_containers.add(container_name)
 
         logger.info(
@@ -109,14 +111,16 @@ class DeploymentStatusMonitor:
         """Build an initial container state snapshot via Docker inspection."""
 
         def _snapshot_sync() -> Dict[str, ServiceState]:
-            services = self.config.compose_services or {}
+            services = self.config.compose_services_resolved or {}
             if not services:
                 return {}
 
             client = self.config.get_docker_client()
             snapshot: Dict[str, ServiceState] = {}
-            for service_name, service_config in services.items():
-                container_name = service_config.get("container_name", service_name)
+            for service_name in services.keys():
+                container_name = self.config.get_container_name_by_service(service_name, resolved=True)
+                if not container_name:
+                    container_name = service_name
                 try:
                     if not client.container.exists(container_name):
                         snapshot[container_name] = ServiceState.REMOVED

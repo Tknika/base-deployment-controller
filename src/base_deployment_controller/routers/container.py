@@ -138,14 +138,19 @@ class ContainerRoutes:
             client = self.config.get_docker_client()
             containers = []
             for service_name, service_config in services.items():
-                container_name = service_config.get("container_name", service_name)
-                ports = service_config.get("expose", [])
+                resolved_service_config = self.config.compose_services_resolved.get(
+                    service_name, service_config
+                )
+                container_name = self.config.get_container_name_by_service(service_name)
+                if not container_name:
+                    container_name = service_name
+                ports = resolved_service_config.get("expose", [])
                 try:
                     if not client.container.exists(container_name):
                         containers.append(
                             ContainerInfo(
                                 name=service_name,
-                                image=service_config.get("image", ""),
+                                image=resolved_service_config.get("image", ""),
                                 status="Container not created",
                                 started_at=None,
                                 ports=ports,
@@ -166,7 +171,7 @@ class ContainerRoutes:
                 containers.append(
                     ContainerInfo(
                         name=service_name,
-                        image=service_config.get("image", ""),
+                        image=resolved_service_config.get("image", ""),
                         status=status,
                         started_at=started_at,
                         ports=ports,
@@ -206,7 +211,12 @@ class ContainerRoutes:
                     detail=f"Service '{container_name}' not found in compose.yaml",
                 )
             service_config = services[container_name]
-            actual_container_name = service_config.get("container_name", container_name)
+            resolved_service_config = self.config.compose_services_resolved.get(
+                container_name, service_config
+            )
+            actual_container_name = self.config.get_container_name_by_service(container_name)
+            if not actual_container_name:
+                actual_container_name = container_name
             client = self.config.get_docker_client()
 
             if not client.container.exists(actual_container_name):
@@ -220,10 +230,10 @@ class ContainerRoutes:
             logger.info(f"Successfully retrieved info for {container_name}")
             return ContainerInfo(
                 name=container_name,
-                image=service_config.get("image", ""),
+                image=resolved_service_config.get("image", ""),
                 status=container_inspect.state.status or "unknown",
                 started_at=container_inspect.state.started_at,
-                ports=service_config.get("expose", []),
+                ports=resolved_service_config.get("expose", []),
                 depends_on=self.config.get_service_dependencies(container_name),
             )
         except HTTPException:
@@ -321,8 +331,9 @@ class ContainerRoutes:
                     detail=f"Service '{container_name}' not found in compose.yaml",
                 )
 
-            service_config = services[container_name]
-            actual_container_name = service_config.get("container_name", container_name)
+            actual_container_name = self.config.get_container_name_by_service(container_name)
+            if not actual_container_name:
+                actual_container_name = container_name
             client = self.config.get_docker_client()
 
             if not client.container.exists(actual_container_name):

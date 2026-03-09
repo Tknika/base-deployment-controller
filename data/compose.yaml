@@ -1,7 +1,7 @@
 services:
   mongo:
     image: mongo:6.0
-    container_name: mongo
+    container_name: ${DEPLOYMENT_PREFIX}-mongo
     command: --bind_ip 0.0.0.0
     volumes:
       - mongodbdata:/data/db
@@ -9,7 +9,7 @@ services:
       - /etc/timezone:/etc/timezone:ro
       - /etc/localtime:/etc/localtime:ro
     healthcheck:
-      test: ["CMD-SHELL", "mongosh --quiet --eval 'db.getMongo().getDBNames().indexOf(\"open5gs\")' || exit 1"]
+      test: ["CMD-SHELL", "mongosh --quiet --eval 'db.getMongo().getDBNames()' || exit 1"]
       interval: 5s
       timeout: 3s
       start_period: 5s
@@ -22,8 +22,8 @@ services:
       default:
         ipv4_address: ${MONGO_IP}
   webui:
-    image: ghcr.io/tknika/docker_open5gs:v2.7.6-20251216
-    container_name: webui
+    image: ghcr.io/tknika/docker_open5gs:v2.7.6-20260222
+    container_name: ${DEPLOYMENT_PREFIX}-webui
     depends_on:
       - mongo
     environment:
@@ -44,8 +44,8 @@ services:
       default:
         ipv4_address: ${WEBUI_IP}
   hss:
-    image: ghcr.io/tknika/docker_open5gs:v2.7.6-20251216
-    container_name: hss
+    image: ghcr.io/tknika/docker_open5gs:v2.7.6-20260222
+    container_name: ${DEPLOYMENT_PREFIX}-hss
     environment:
       - COMPONENT_NAME=hss
       - MNC=${MNC}
@@ -72,11 +72,11 @@ services:
       default:
         ipv4_address: ${HSS_IP}
   sgwc:
-    image: ghcr.io/tknika/docker_open5gs:v2.7.6-20251216
+    image: ghcr.io/tknika/docker_open5gs:v2.7.6-20260222
     depends_on:
       - smf
       - upf
-    container_name: sgwc
+    container_name: ${DEPLOYMENT_PREFIX}-sgwc
     environment:
       - COMPONENT_NAME=sgwc
       - SGWU_IP=${SGWU_IP}
@@ -96,11 +96,11 @@ services:
       default:
         ipv4_address: ${SGWC_IP}
   sgwu:
-    image: ghcr.io/tknika/docker_open5gs:v2.7.6-20251216
+    image: ghcr.io/tknika/docker_open5gs:v2.7.6-20260222
     depends_on:
       - smf
       - upf
-    container_name: sgwu
+    container_name: ${DEPLOYMENT_PREFIX}-sgwu
     environment:
       - COMPONENT_NAME=sgwu
       - SGWU_IP=${SGWU_IP}
@@ -123,11 +123,12 @@ services:
       default:
         ipv4_address: ${SGWU_IP}
   smf:
-    image: ghcr.io/tknika/docker_open5gs:v2.7.6-20251216
-    container_name: smf
+    image: ghcr.io/tknika/docker_open5gs:v2.7.6-20260222
+    container_name: ${DEPLOYMENT_PREFIX}-smf
     environment:
       - COMPONENT_NAME=smf
       - DEPLOY_MODE=4G
+      - DNN_LIST=${DNN_LIST}
       - SMF_IP=${SMF_IP}
       - SCP_IP=${SCP_IP}
       - NRF_IP=${NRF_IP}
@@ -163,12 +164,13 @@ services:
       default:
         ipv4_address: ${SMF_IP}
   upf:
-    image: ghcr.io/tknika/docker_open5gs:v2.7.6-20251216
+    image: ghcr.io/tknika/docker_open5gs:v2.7.6-20260222
     depends_on:
       - smf
-    container_name: upf
+    container_name: ${DEPLOYMENT_PREFIX}-upf
     environment:
       - COMPONENT_NAME=upf
+      - DNN_LIST=${DNN_LIST}
       - UPF_TUNTAP_MODE=${UPF_TUNTAP_MODE}
       - UPF_ADVERTISE_IP=${UPF_ADVERTISE_IP}
       - UPF_INTERNET_APN_IF_NAME=${UPF_INTERNET_APN_IF_NAME}
@@ -200,7 +202,7 @@ services:
       default:
         ipv4_address: ${UPF_IP}
   mme:
-    image: ghcr.io/tknika/docker_open5gs:v2.7.6-20251216
+    image: ghcr.io/tknika/docker_open5gs:v2.7.6-20260222
     depends_on:
       - hss
       - sgwc
@@ -208,9 +210,10 @@ services:
       - smf
       - upf
       #- osmomsc
-    container_name: mme
+    container_name: ${DEPLOYMENT_PREFIX}-mme
     environment:
       - COMPONENT_NAME=mme
+      - NETWORK_NAME=${NETWORK_NAME}
       - MNC=${MNC}
       - MCC=${MCC}
       - TAC=${TAC}
@@ -241,8 +244,8 @@ services:
       default:
         ipv4_address: ${MME_IP}
   pcrf:
-    image: ghcr.io/tknika/docker_open5gs:v2.7.6-20251216
-    container_name: pcrf
+    image: ghcr.io/tknika/docker_open5gs:v2.7.6-20260222
+    container_name: ${DEPLOYMENT_PREFIX}-pcrf
     environment:
       - COMPONENT_NAME=pcrf
       - MONGO_IP=${MONGO_IP}
@@ -283,18 +286,24 @@ networks:
 
 volumes:
   mongodbdata:
-    name: docker_open5gs_mongodbdata
+    name: ${DEPLOYMENT_PREFIX}-mongodbdata
 
 x-metadata:
   id: 4g-core
   name: 4G Core Network
   description: Docker Compose configuration for a 4G Core Network using Open5GS components.
-  version: "1.0"
-  author: TKNIKA - www.tknika.eus
+  version: "0.1.0"
+  author: Tknika
   changelog: "First release."
   documentation_url: ""
 
 x-env-vars:
+  NETWORK_NAME:
+    name: Network Name
+    description: Name of the mobile network
+    default: "Open5GS"
+    advanced: false
+    type: string:0;^[a-zA-Z0-9\-]+$
   MCC:
     name: MCC
     description: Mobile Country Code
@@ -313,6 +322,18 @@ x-env-vars:
     default: "1"
     advanced: false
     type: string:0;^\d{1,5}$
+  OP:
+    name: OP (Operator Variant Algorithm Configuration Field)
+    description: Configuration field for operator variant algorithm in a 4G/5G Core Network
+    default: ""
+    advanced: false
+    type: string:1;^[0-9a-fA-F]{32}$
+  DNN_LIST:
+    name: DNN List
+    description: List of Data Network Names (DNNs) with their corresponding subnets and interface names
+    default: "internet,192.168.100.0/24,ogstun;ims,192.168.101.0/24,ogstun2"
+    advanced: false
+    type: string:0;^([a-zA-Z0-9\-]+,\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/\d{1,2},[a-zA-Z0-9\-]+)(;[a-zA-Z0-9\-]+,\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/\d{1,2},[a-zA-Z0-9\-]+)*$
   MAX_NUM_UE:
     name: Max number of UEs
     description: Maximum number of User Equipments
@@ -358,7 +379,7 @@ x-env-vars:
   SGWU_ADVERTISE_IP:
     name: SGW-U Advertise IP
     description: Advertised IP address for SGW-U external communication
-    default: "192.168.1.121"
+    default: "0.0.0.0"
     advanced: true
     type: string:0;^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$
   SMF_IP:
